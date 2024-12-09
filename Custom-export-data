@@ -1,0 +1,188 @@
+<?php
+// Add custom shortcode for export button
+if ( ! function_exists( 'export_button_shortcode' ) ) {
+    function export_button_shortcode() {
+        // The button HTML with nonce for security
+        $nonce = wp_create_nonce('export_data_nonce'); // Security nonce
+        return '<button id="exportDataBtn" data-nonce="' . $nonce . '" style="padding: 10px 20px; font-size: 16px; background-color: #4CAF50; color: white; border: none; cursor: pointer;">Export Data</button>';
+    }
+    add_shortcode('export_button', 'export_button_shortcode');
+}
+
+// Enqueue necessary JavaScript to handle button click
+function export_button_script() {
+    ?>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var button = document.getElementById('exportDataBtn');
+            if (button) {
+                button.addEventListener('click', function() {
+                    var nonce = button.getAttribute('data-nonce');
+                    var ajax_url = '<?php echo admin_url('admin-ajax.php'); ?>'; // Get admin-ajax URL dynamically
+
+                    // Trigger the export function via AJAX (using nonce for security)
+                    window.location.href = ajax_url + "?action=export_hall_ticket_data&nonce=" + nonce;
+                });
+            }
+        });
+    </script>
+    <?php
+}
+add_action('wp_footer', 'export_button_script');
+
+// Handle the export action
+function export_hall_ticket_data() {
+    // Check if nonce is set
+    if ( !isset($_GET['nonce']) ) {
+        die('Nonce is not set.');
+    }
+
+    // Verify nonce for security
+    // if ( !wp_verify_nonce($_GET['nonce'], 'export_data_nonce') ) {
+    //     die('Nonce verification failed.');
+    // }
+
+    // Set headers for CSV download
+    header('Content-Type: text/csv');
+    header('Content-Disposition: attachment; filename="hall_ticket_export.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    // Open PHP output stream for CSV
+    $output = fopen('php://output', 'w');
+
+    // Define the column headers
+     $headers = [ 'Student Photo','Hall Ticket No.', 'Name', 'Father Name', 'Gender', 'Country', 'State', 'District', 'Subjects', 'Phone Number', 'WhatsApp Number', 'Exam Applied For', 'Centre Address', 'Date of Birth', 'Current Class', 'Aadhaar Number'];
+    fputcsv($output, $headers);
+
+    // Query the Gravity Forms entries
+    $form_id = 10; // Replace with your actual form ID
+    $page = 1;
+    $per_page = 200;
+
+    // Set up search criteria to filter entries by payment_status
+    $search_criteria = array(
+        'status' => 'active', // Only get active entries
+        'field_filters' => array(
+            array(
+                'key'   => 'payment_status',  // The meta key for payment status
+                'value' => 'Paid'             // We want entries with "Paid" status
+            )
+        )
+    );
+
+    $entries = GFAPI::get_entries($form_id, $search_criteria, null, array('offset' => ($page - 1) * $per_page, 'page_size' => $per_page));
+
+    if ( empty($entries) ) {
+        die('No entries found.');
+    }
+    
+    $subject_field_ids = ['206.1', '206.2', '207.1', '207.2', '208.1', '212.1', '212.2', '209.1', '214.1', '214.2', '210.2', '215.1', '215.2', '211.1'];
+
+    // List of possible keys for hall ticket number
+    $hall_ticket_keys = [
+       233, 228, 230, 229, 226, 224, 222, 64, 65, 66, 67, 68, 70, 71, 72, 73, 75, 77, 78, 80, 81, 87, 90,
+        92, 94, 96, 98, 100, 101, 103, 104, 106, 110, 111, 112, 113, 114, 115, 116, 117, 119,
+        121, 123, 125, 128, 131, 132, 133, 134, 135, 136, 137, 139, 141, 143, 145, 147, 149,
+        151, 153, 155, 157, 159, 163, 166, 168, 170, 171, 173, 175, 178, 181, 184, 186, 189,
+        191, 193, 196, 218, 219
+    ];
+
+    // List of possible keys for district
+    $district_keys = [46, 108, 126, 129, 161, 160, 176, 179, 182, 187, 194];
+
+    // List of possible keys for centre address
+    $centre_address_keys = [ 232, 
+    227, 231, 223, 221, 63, 69, 74, 76, 79, 85, 89, 91, 93, 95, 97, 99, 102, 105, 109, 118, 120, 
+        122, 124, 127, 130, 138, 140, 142, 144, 146, 148, 150, 152, 154, 156, 158, 162, 165, 
+        167, 169, 172, 174, 177, 180, 183, 185, 188, 190, 192, 217, 220
+    ];
+
+    // Loop through the entries and fetch the required fields
+    foreach ($entries as $entry) {
+        $file_url = rgar($entry, 202);
+        $name = isset($entry[1]) ? sanitize_text_field($entry[1]) : '';
+        $father_name = isset($entry[43]) ? sanitize_text_field($entry[43]) : '';
+        $gender = isset($entry[204]) ? sanitize_text_field($entry[204]) : '';
+        $country = isset($entry[201]) ? sanitize_text_field($entry[201]) : '';
+        $state = isset($entry[22]) ? sanitize_text_field($entry[22]) : '';
+
+        // Fetch the first available district
+        $district = '';
+        foreach ($district_keys as $key) {
+            if (isset($entry[$key]) && !empty($entry[$key])) {
+                $district = sanitize_text_field($entry[$key]);
+                break;
+            }
+        }
+
+        $phone_number = isset($entry[8]) ? sanitize_text_field($entry[8]) : '';
+        $whatsapp_number = isset($entry[198]) ? sanitize_text_field($entry[198]) : '';
+
+        // Fetch the first available hall ticket number
+        $hall_ticket_no = '';
+        foreach ($hall_ticket_keys as $key) {
+            if (isset($entry[$key]) && !empty($entry[$key])) {
+                $hall_ticket_no = sanitize_text_field($entry[$key]);
+                break;
+            }
+        }
+        
+        // Fetch subjects dynamically
+        $subjects = [];
+        foreach ($subject_field_ids as $field_id) {
+            if (isset($entry[$field_id]) && !empty($entry[$field_id])) {
+                $subjects[] = sanitize_text_field($entry[$field_id]);
+            }
+        }
+        $subjects_combined = !empty($subjects) ? implode(', ', $subjects) : '';
+
+        $exam_applied_for = isset($entry[44]) ? sanitize_text_field($entry[44]) : '';
+
+        // Fetch the first available centre address
+        $centre_address = '';
+        foreach ($centre_address_keys as $key) {
+            if (isset($entry[$key]) && !empty($entry[$key])) {
+                $centre_address = sanitize_text_field($entry[$key]);
+                break;
+            }
+        }
+
+        $dob = isset($entry[2]) ? sanitize_text_field($entry[2]) : '';
+        $current_class = isset($entry[199]) ? sanitize_text_field($entry[199]) : '';
+        $aadhaar_number = isset($entry[200]) ? sanitize_text_field($entry[200]) : '';
+
+        // Prepare the data row
+        $data_row = [
+            $file_url,
+            $hall_ticket_no,
+            $name,
+            $father_name,
+            $gender,
+            $country,
+            $state,
+            $district,
+            $subjects_combined,
+            $phone_number,
+            $whatsapp_number,
+            $exam_applied_for,
+            $centre_address,
+            $dob,
+            $current_class,
+            $aadhaar_number
+        ];
+
+        // Output the row to the CSV
+        fputcsv($output, $data_row);
+    }
+
+    // Close the output stream
+    fclose($output);
+    exit;
+}
+
+// Register the export action for logged-in users
+add_action('wp_ajax_export_hall_ticket_data', 'export_hall_ticket_data');
+
+// Register the export action for non-logged-in users (optional)
+add_action('wp_ajax_nopriv_export_hall_ticket_data', 'export_hall_ticket_data');
